@@ -39,17 +39,19 @@ class IsoStream:
         use_cache: bool = True,
         cache_name: str = "isostream_cache",
         cache_backend: str = "sqlite",
+        host: str = HOST,
     ):
         self._api_key = api_key
         self._use_cache = use_cache
         self._verbose = verbose
+        self._host = host
         if use_cache:
             self._session = requests_cache.CachedSession(
                 cache_name, backend=cache_backend
             )
         else:
             self._session = requests.Session()
-        self._api_spec = self._session.get(HOST + "/openapi.json").json()
+        self._api_spec = self._session.get(self._host + "/openapi.json").json()
         self._create_methods()
 
     def _make_docstring(self, path: str) -> str:
@@ -111,7 +113,9 @@ class IsoStream:
         List[Dict]
         """
         params["api_key"] = self._api_key
-        resp = self._session.get(HOST + path, params=params)
+        if self._verbose:
+            print(self._host + path, params)
+        resp = self._session.get(self._host + path, params=params)
         if resp.status_code != 200:
             try:
                 msg = ",".join(
