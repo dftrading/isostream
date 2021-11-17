@@ -8,6 +8,7 @@ A simple wrapper around the ISOStream API that produces well formated pandas Dat
 You can install the library with:
 ```
 pip install isostream
+pip install git+ssh://git@github.com/dftrading/isostream.git
 ```
 
 ## Quickstart
