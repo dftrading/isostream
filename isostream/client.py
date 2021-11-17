@@ -5,6 +5,7 @@ from typing import Any, Dict, Generator, List, Type, Union
 import pandas as pd
 import requests
 import requests_cache
+from dateutil.parser import parse
 
 from .utils import ApiException
 
@@ -68,32 +69,32 @@ class IsoStream:
                 _type = arg_def["schema"].get("type")
                 desc = arg_def.get("description")
             docstr += f"\n{name} : {_type}, required = {req} \n    {desc}"
-        return docstr
+
+        return (
+            f"Wrapper method for API call to {path} \n\n"
+            "Parameters \n"
+            "----------"
+            f"{docstr} \n"
+            "as_df : bool, default = True \n"
+            "    Return the result as a pandas DataFrame, or as raw result \n"
+            "pivot : bool, default = True \n"
+            "    If returning a DataFrame, whether to pivot it to a more useful format \n\n"
+            "Returns\n"
+            "-------\n"
+            "List[Dict] or pd.DataFrame\n\n"
+        )
 
     def _create_methods(self) -> None:
+        """Create all the methods from the OpenAPI Spec and attach them to the class"""
         for path in self._api_spec["paths"]:
 
             def member_func(path, as_df: bool = True, pivot: bool = True, **kwargs):
                 return self._api_get(path, as_df=as_df, pivot=pivot, **kwargs)
 
-            method_name = self._path_to_name(path)
             method = partial(member_func, path)
-            method.__name__ = method_name
-            docstr = self._make_docstring(path)
-            method.__doc__ = (
-                f"Wrapper method for API call to {path} \n\n"
-                "Parameters \n"
-                "----------"
-                f"{docstr} \n"
-                "as_df : bool, default = True \n"
-                "    Return the result as a pandas DataFrame, or as raw result \n"
-                "pivot : bool, default = True \n"
-                "    If returning a DataFrame, whether to pivot it to a more useful format \n\n"
-                "Returns\n"
-                "-------\n"
-                "List[Dict] or pd.DataFrame\n\n"
-            )
-            setattr(self, method_name, method)
+            method.__name__ = self._path_to_name(path)
+            method.__doc__ = self._make_docstring(path)
+            setattr(self, method.__name__, method)
 
     def _get(self, path: str, params: Dict) -> List[Dict]:
         """GET a path with parameters
@@ -194,12 +195,11 @@ class IsoStream:
                     raise TypeError(f"{m}() missing keyword-only argument '{name}'")
             else:
                 p = kwargs.pop(name, None)
-            if (
-                p
-                and arg["schema"].get("format") == "date-time"
-                and isinstance(p, datetime)
-            ):
-                p = p.strftime(self._format)
+            if p and arg["schema"].get("format") == "date-time":
+                if isinstance(p, datetime):
+                    p = p.strftime(self._format)
+                else:
+                    p = parse(p).strftime(self._format)
             params[name] = p
 
         if kwargs:
@@ -210,3 +210,11 @@ class IsoStream:
         if as_df:
             return self._format_df(path, resp, guess_pivot=pivot)
         return resp
+
+    def api_methods(self, filter: str = None) -> None:
+        """ "Print all available API Methods"""
+        for path in self._api_spec["paths"]:
+            if filter and filter not in path:
+                continue
+            print(f"Method {self._path_to_name(path)}:")
+            print(self._make_docstring(path).replace("\n", "\n\t"))
