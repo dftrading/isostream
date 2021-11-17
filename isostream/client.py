@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any, Dict, Generator, List, Union
+from typing import Any, Dict, Generator, List, Type, Union
 
 import pandas as pd
 import requests
 import requests_cache
+
+from .utils import ApiException
 
 HOST = "https://app.isostream.io/api"
 
@@ -17,17 +19,33 @@ class IsoStream:
     ----------
     api_key : str
         Your ISOStream API key
+    verbose : bool, default = False
+        Print verbose information
     use_cache : bool, default = True
-        Whether or not to use cached data where possible
+        Whether or not to use cached data where possible.
+    cache_name : str, default = isostream_cache"
+        The name of the cache
+    cache_backend : str, default='sqlite'
+        The cache backed to use.  Can be 'sqlite', 'filesystem', 'mongodb', 'gridfs', 'redis', 'dynamodb', 'memory'.
     """
 
     _format = "%Y-%m-%dT%H:%M:%S"
 
-    def __init__(self, api_key: str, use_cache: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        verbose: bool = False,
+        use_cache: bool = True,
+        cache_name: str = "isostream_cache",
+        cache_backend: str = "sqlite",
+    ):
         self._api_key = api_key
         self._use_cache = use_cache
+        self._verbose = verbose
         if use_cache:
-            self._session = requests_cache.CachedSession("isostream")
+            self._session = requests_cache.CachedSession(
+                cache_name, backend=cache_backend
+            )
         else:
             self._session = requests.Session()
         self._api_spec = self._session.get(HOST + "/openapi.json").json()
@@ -44,25 +62,37 @@ class IsoStream:
             if "$ref" in arg_def["schema"]:
                 key = arg_def["schema"]["$ref"].split("/")[-1]
                 comp = self._api_spec["components"]["schemas"][key]
-                desc = comp["description"]
                 _type = comp["type"] + ", " + ",".join(comp.get("enum", []))
+                desc = comp["description"]
             else:
                 _type = arg_def["schema"].get("type")
                 desc = arg_def.get("description")
-            docstr += f"{name} : {_type}, required = {req} \n    {desc}\n\n"
+            docstr += f"\n{name} : {_type}, required = {req} \n    {desc}"
         return docstr
 
     def _create_methods(self) -> None:
         for path in self._api_spec["paths"]:
 
-            def member_func(path, **kwargs):
-                return self._api_get(path, **kwargs)
+            def member_func(path, as_df: bool = True, pivot: bool = True, **kwargs):
+                return self._api_get(path, as_df=as_df, pivot=pivot, **kwargs)
 
-            method_name = path.replace("/", "_").strip("_")
+            method_name = self._path_to_name(path)
             method = partial(member_func, path)
             method.__name__ = method_name
             docstr = self._make_docstring(path)
-            method.__doc__ = f"Wrapper method for API call to {path}\n\nParameters\n----------\n{docstr}\nReturns\n-------\nList[Dict]"
+            method.__doc__ = (
+                f"Wrapper method for API call to {path} \n\n"
+                "Parameters \n"
+                "----------"
+                f"{docstr} \n"
+                "as_df : bool, default = True \n"
+                "    Return the result as a pandas DataFrame, or as raw result \n"
+                "pivot : bool, default = True \n"
+                "    If returning a DataFrame, whether to pivot it to a more useful format \n\n"
+                "Returns\n"
+                "-------\n"
+                "List[Dict] or pd.DataFrame\n\n"
+            )
             setattr(self, method_name, method)
 
     def _get(self, path: str, params: Dict) -> List[Dict]:
@@ -77,14 +107,21 @@ class IsoStream:
 
         Returns
         -------
-        requests.Response
+        List[Dict]
         """
         params["api_key"] = self._api_key
-        print(HOST + path, params)
         resp = self._session.get(HOST + path, params=params)
         if resp.status_code != 200:
-            raise Exception(f"Error in API Call: {resp.text}")
-
+            try:
+                msg = ",".join(
+                    [
+                        "parameter '" + x["loc"][1] + "': " + x["msg"]
+                        for x in resp.json()["detail"]
+                    ]
+                )
+            except Exception:
+                msg = resp.text
+            raise ApiException(f"Error in API Call: {msg}")
         return resp.json()
 
     def _range(self, start: datetime, end: datetime, delta: timedelta) -> Generator:
@@ -95,30 +132,81 @@ class IsoStream:
             yield _start, _end
             _start = _end
 
+    def _path_to_name(self, path: str) -> str:
+        """Return the method name for a given path"""
+        return path.replace("/", "_").strip("_")
+
+    def _format_df(self, path: str, resp: List, guess_pivot=True) -> pd.DataFrame:
+        """Return a properly formatting dataframe"""
+        df = pd.DataFrame(resp)
+        resp_type = self._api_spec["paths"][path]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]["items"]["$ref"].split("/")[-1]
+        schema = self._api_spec["components"]["schemas"][resp_type]
+        for name, info in schema["properties"].items():
+            if info["type"] == "number":
+                df[name] = df[name].astype("float64")
+            elif info["type"] == "string":
+                if info.get("format") == "date-time":
+                    df[name] = df[name].astype("datetime64")
+                else:
+                    df[name] = df[name].astype("string")
+
+        if guess_pivot:
+            idx = df.dtypes.index[df.dtypes == "datetime64[ns]"]
+            cols = df.dtypes.index[df.dtypes == "string"]
+            if not idx.empty and not cols.empty:
+                return df.pivot(index=idx[0], columns=cols[0])
+            elif not cols.empty:
+                return df.set_index(cols[0])
+        return df
+
     def _api_get(
         self,
         path: str,
         as_df: bool = True,
+        pivot: bool = True,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[Dict]]:
+        """A generic api call
+
+        Parameters
+        ----------
+        path : str
+            The path of the API to call
+        as_df : boo, default = True
+            Whether to return result as a dataframe or not
+        pivot : bool, default = True
+            If returning a DataFrame, pivot the resulting dataframe
+        **kwargs : Any
+            The parameters for the method call
+        """
         params = {}
+        m = self._path_to_name(path)
         for arg in self._api_spec["paths"][path]["get"]["parameters"]:
             name = arg["name"]
             if name == "api_key":
                 continue
-            if arg["schema"].get("format") == "date-time":
-                params[name] = kwargs.pop(name).strftime(self._format)
+            if arg["required"]:
+                try:
+                    p = kwargs.pop(name)
+                except KeyError:
+                    raise TypeError(f"{m}() missing keyword-only argument '{name}'")
             else:
-                if arg["required"]:
-                    params[name] = kwargs.pop(name)
-                else:
-                    params[name] = kwargs.pop(name, None)
+                p = kwargs.pop(name, None)
+            if (
+                p
+                and arg["schema"].get("format") == "date-time"
+                and isinstance(p, datetime)
+            ):
+                p = p.strftime(self._format)
+            params[name] = p
 
         if kwargs:
             invalid = ",".join(list(kwargs.keys()))
-            raise TypeError(f"Unknown input parameters: {invalid}")
+            raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
         resp = self._get(path, params)
 
         if as_df:
-            return pd.DataFrame(resp)
+            return self._format_df(path, resp, guess_pivot=pivot)
         return resp
