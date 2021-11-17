@@ -127,7 +127,11 @@ class IsoStream:
             except Exception:
                 msg = resp.text
             raise ApiException(f"Error in API Call: {msg}")
-        return resp.json()
+        json = resp.json()
+        if not json:
+            raise ApiException(f"Query parameters produced no results: {params}")
+
+        return json
 
     def _range(self, start: datetime, end: datetime, delta: timedelta) -> Generator:
         """Return a generator that produces timestamp splits that area delta time apart"""
