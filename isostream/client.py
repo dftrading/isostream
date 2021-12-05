@@ -7,7 +7,7 @@ import requests
 import requests_cache
 from dateutil.parser import parse
 
-from .utils import ApiException
+from .utils import ApiException, time_chunk
 
 HOST = "https://app.isostream.io/api"
 
@@ -36,7 +36,7 @@ class IsoStream:
         self,
         api_key: str,
         verbose: bool = False,
-        use_cache: bool = True,
+        use_cache: bool = False,
         cache_name: str = "isostream_cache",
         cache_backend: str = "sqlite",
         host: str = HOST,
@@ -55,7 +55,7 @@ class IsoStream:
         self._create_methods()
 
     def _make_docstring(self, path: str) -> str:
-        """Return a custom docstring based on the path specification"""
+        """Return a custom docstring for a method based on the OpenAPI path specification"""
         docstr = ""
         for arg_def in self._api_spec["paths"][path]["get"]["parameters"]:
             name = arg_def["name"]
@@ -79,8 +79,10 @@ class IsoStream:
             f"{docstr} \n"
             "as_df : bool, default = True \n"
             "    Return the result as a pandas DataFrame, or as raw result \n"
-            "pivot : bool, default = True \n"
-            "    If returning a DataFrame, whether to pivot it to a more useful format \n\n"
+            "pivot : bool, default = False \n"
+            "    If returning a DataFrame, whether to pivot it to a more useful format \n"
+            "chunk : int, default = 365 \n"
+            "    If the query is a timeseries query, break the query into chunk day intervals \n\n"
             "Returns\n"
             "-------\n"
             "List[Dict] or pd.DataFrame\n\n"
@@ -90,7 +92,7 @@ class IsoStream:
         """Create all the methods from the OpenAPI Spec and attach them to the class"""
         for path in self._api_spec["paths"]:
 
-            def member_func(path, as_df: bool = True, pivot: bool = True, **kwargs):
+            def member_func(path, as_df: bool = True, pivot: bool = False, **kwargs):
                 return self._api_get(path, as_df=as_df, pivot=pivot, **kwargs)
 
             method = partial(member_func, path)
@@ -133,14 +135,6 @@ class IsoStream:
 
         return json
 
-    def _range(self, start: datetime, end: datetime, delta: timedelta) -> Generator:
-        """Return a generator that produces timestamp splits that area delta time apart"""
-        _start = start
-        while _start < end:
-            _end = min(_start + delta, end)
-            yield _start, _end
-            _start = _end
-
     def _path_to_name(self, path: str) -> str:
         """Return the method name for a given path"""
         return path.replace("/", "_").strip("_")
@@ -170,11 +164,15 @@ class IsoStream:
                 return df.set_index(cols[0])
         return df
 
+    def _is_time_query(self, kwargs: dict) -> bool:
+        return "start" in kwargs and "end" in kwargs
+
     def _api_get(
         self,
         path: str,
         as_df: bool = True,
         pivot: bool = True,
+        chunk: int = 365,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, List[Dict]]:
         """A generic api call
@@ -213,14 +211,26 @@ class IsoStream:
         if kwargs:
             invalid = ",".join(list(kwargs.keys()))
             raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
-        resp = self._get(path, params)
+
+        if self._is_time_query(params):
+            resp = []
+            for _start, _end in time_chunk(
+                parse(params["start"]),
+                parse(params["end"]),
+                delta=timedelta(days=chunk),
+            ):
+                params["start"] = _start
+                params["end"] = _end
+                resp += self._get(path, params)
+        else:
+            resp = self._get(path, params)
 
         if as_df:
             return self._format_df(path, resp, guess_pivot=pivot)
         return resp
 
     def api_methods(self, filter: str = None) -> None:
-        """ "Print all available API Methods"""
+        """ "Print all available API Methods. Optionally filter methods on keyword"""
         for path in self._api_spec["paths"]:
             if filter and filter not in path:
                 continue
