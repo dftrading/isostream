@@ -100,7 +100,7 @@ class IsoStream:
             method.__doc__ = self._make_docstring(path)
             setattr(self, method.__name__, method)
 
-    def _get(self, path: str, params: Dict) -> List[Dict]:
+    def _get(self, path: str, params: Dict, method="GET") -> List[Dict]:
         """GET a path with parameters
 
         Parameters
@@ -114,10 +114,11 @@ class IsoStream:
         -------
         List[Dict]
         """
+        print(params)
         params["api_key"] = self._api_key
         if self._verbose:
             print(self._host + path, params)
-        resp = self._session.get(self._host + path, params=params)
+        resp = self._session.request(method, self._host + path, params=params)
         if resp.status_code != 200:
             try:
                 msg = ",".join(
@@ -147,6 +148,8 @@ class IsoStream:
         ]["schema"]["items"]["$ref"].split("/")[-1]
         schema = self._api_spec["components"]["schemas"][resp_type]
         for name, info in schema["properties"].items():
+            if "type" not in info:
+                continue
             if info["type"] == "number":
                 df[name] = df[name].astype("float64")
             elif info["type"] == "string":
@@ -208,6 +211,8 @@ class IsoStream:
                     p = parse(p).strftime(self._format)
             params[name] = p
 
+        if "timezone" in kwargs:
+            params["timezone"] = kwargs.pop("timezone")
         if kwargs:
             invalid = ",".join(list(kwargs.keys()))
             raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
