@@ -52,12 +52,18 @@ class IsoStream:
         else:
             self._session = requests.Session()
         self._api_spec = self._session.get(self._host + "/openapi.json").json()
+        self._paths = {}
+        for path, info in self._api_spec["paths"].items():
+            method = "get" if "get" in info else "post"
+            self._paths[path] = info[method]
+            self._paths[path]["_method"] = method
+
         self._create_methods()
 
     def _make_docstring(self, path: str) -> str:
         """Return a custom docstring for a method based on the OpenAPI path specification"""
         docstr = ""
-        for arg_def in self._api_spec["paths"][path]["get"]["parameters"]:
+        for arg_def in self._paths[path]["parameters"]:
             name = arg_def["name"]
             if name == "api_key":
                 continue
@@ -85,7 +91,7 @@ class IsoStream:
             "    If the query is a timeseries query, break the query into chunk day intervals \n\n"
             "Returns\n"
             "-------\n"
-            "List[Dict] or pd.DataFrame\n\n"
+            "List[Dict] or pd.DataFrame \n\n"
         )
 
     def _create_methods(self) -> None:
@@ -100,7 +106,7 @@ class IsoStream:
             method.__doc__ = self._make_docstring(path)
             setattr(self, method.__name__, method)
 
-    def _get(self, path: str, params: Dict, method="GET") -> List[Dict]:
+    def _get(self, path: str, params: Dict) -> List[Dict]:
         """GET a path with parameters
 
         Parameters
@@ -114,10 +120,10 @@ class IsoStream:
         -------
         List[Dict]
         """
-        print(params)
         params["api_key"] = self._api_key
         if self._verbose:
             print(self._host + path, params)
+        method = self._paths[path]["_method"]
         resp = self._session.request(method, self._host + path, params=params)
         if resp.status_code != 200:
             try:
@@ -143,7 +149,7 @@ class IsoStream:
     def _format_df(self, path: str, resp: List, guess_pivot=True) -> pd.DataFrame:
         """Return a properly formatting dataframe"""
         df = pd.DataFrame(resp)
-        resp_type = self._api_spec["paths"][path]["get"]["responses"]["200"]["content"][
+        resp_type = self._paths[path]["responses"]["200"]["content"][
             "application/json"
         ]["schema"]["items"]["$ref"].split("/")[-1]
         schema = self._api_spec["components"]["schemas"][resp_type]
@@ -193,7 +199,7 @@ class IsoStream:
         """
         params = {}
         m = self._path_to_name(path)
-        for arg in self._api_spec["paths"][path]["get"]["parameters"]:
+        for arg in self._paths[path]["parameters"]:
             name = arg["name"]
             if name == "api_key":
                 continue
@@ -210,12 +216,11 @@ class IsoStream:
                 else:
                     p = parse(p).strftime(self._format)
             params[name] = p
-
-        if "timezone" in kwargs:
-            params["timezone"] = kwargs.pop("timezone")
-        if kwargs:
-            invalid = ",".join(list(kwargs.keys()))
-            raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
+        # if "timezone" in kwargs:
+        #     params["timezone"] = kwargs.pop("timezone")
+        # if kwargs:
+        #     invalid = ",".join(list(kwargs.keys()))
+        #     raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
 
         if self._is_time_query(params):
             resp = []
