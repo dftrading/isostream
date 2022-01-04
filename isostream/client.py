@@ -136,11 +136,7 @@ class IsoStream:
             except Exception:
                 msg = resp.text
             raise ApiException(f"Error in API Call: {msg}")
-        json = resp.json()
-        if not json:
-            raise ApiException(f"Query parameters produced no results: {params}")
-
-        return json
+        return resp.json()
 
     def _path_to_name(self, path: str) -> str:
         """Return the method name for a given path"""
