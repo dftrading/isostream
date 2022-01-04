@@ -152,6 +152,8 @@ class IsoStream:
         for name, info in schema["properties"].items():
             if "type" not in info:
                 continue
+            if name not in df.columns:
+                pass
             if info["type"] == "number":
                 df[name] = df[name].astype("float64")
             elif info["type"] == "string":
