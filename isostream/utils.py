@@ -27,7 +27,6 @@ def time_chunk(start: datetime, end: datetime, delta: timedelta) -> Generator:
     _start = start
     while _start < end:
         _end = min(_start + delta, end)
-        print(_start, _end)
         yield _start, _end
 
         _start = _end
