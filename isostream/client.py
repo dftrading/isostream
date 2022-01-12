@@ -1,15 +1,12 @@
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any, Dict, Generator, List, Type, Union
+from typing import Any, Dict, List, Union
 
 import pandas as pd
 import requests
-import requests_cache
 from dateutil.parser import parse
 
 from .utils import ApiException, time_chunk
-
-HOST = "https://app.isostream.io/api"
 
 
 class IsoStream:
@@ -22,37 +19,19 @@ class IsoStream:
         Your ISOStream API key
     verbose : bool, default = False
         Print verbose information
-    use_cache : bool, default = True
-        Whether or not to use cached data where possible.
-    cache_name : str, default = isostream_cache"
-        The name of the cache
-    cache_backend : str, default='sqlite'
-        The cache backed to use.  Can be 'sqlite', 'filesystem', 'mongodb', 'gridfs', 'redis', 'dynamodb', 'memory'.
     """
 
+    _host = "https://app.isostream.io/api"
     _format = "%Y-%m-%dT%H:%M:%S"
 
-    def __init__(
-        self,
-        api_key: str,
-        verbose: bool = False,
-        use_cache: bool = False,
-        cache_name: str = "isostream_cache",
-        cache_backend: str = "sqlite",
-        host: str = HOST,
-    ):
+    def __init__(self, api_key: str, verbose: bool = False) -> None:
+        """Initialize the client"""
         self._api_key = api_key
-        self._use_cache = use_cache
         self._verbose = verbose
-        self._host = host
-        if use_cache:
-            self._session = requests_cache.CachedSession(
-                cache_name, backend=cache_backend
-            )
-        else:
-            self._session = requests.Session()
+        self._session = requests.Session()
         self._api_spec = self._session.get(self._host + "/openapi.json").json()
         self._paths = {}
+
         for path, info in self._api_spec["paths"].items():
             method = "get" if "get" in info else "post"
             self._paths[path] = info[method]
@@ -62,7 +41,7 @@ class IsoStream:
 
     def _make_docstring(self, path: str) -> str:
         """Return a custom docstring for a method based on the OpenAPI path specification"""
-        docstr = ""
+        strs = []
         for arg_def in self._paths[path]["parameters"]:
             name = arg_def["name"]
             if name == "api_key":
@@ -76,8 +55,8 @@ class IsoStream:
             else:
                 _type = arg_def["schema"].get("type")
                 desc = arg_def.get("description")
-            docstr += f"\n{name} : {_type}, required = {req} \n    {desc}"
-
+            strs.append(f"\n{name} : {_type}, required = {req} \n    {desc}")
+        docstr = "".join(strs)
         return (
             f"Wrapper method for API call to {path} \n\n"
             "Parameters \n"
@@ -95,7 +74,7 @@ class IsoStream:
         )
 
     def _create_methods(self) -> None:
-        """Create all the methods from the OpenAPI Spec and attach them to the class"""
+        """Create all the methods from the OpenAPI Spec and attach them to the class as partial functions"""
         for path in self._api_spec["paths"]:
 
             def member_func(path, as_df: bool = True, pivot: bool = False, **kwargs):
@@ -139,11 +118,40 @@ class IsoStream:
         return resp.json()
 
     def _path_to_name(self, path: str) -> str:
-        """Return the method name for a given path"""
+        """Return the method name for a given path
+
+        Parameters
+        ----------
+        path : str
+            The URL path to query
+
+        Returns
+        -------
+        str : The method name
+        """
         return path.replace("/", "_").strip("_")
 
-    def _format_df(self, path: str, resp: List, guess_pivot=True) -> pd.DataFrame:
-        """Return a properly formatting dataframe"""
+    def _format_df(
+        self,
+        path: str,
+        resp: List[Dict],
+        guess_pivot: bool = True,
+    ) -> pd.DataFrame:
+        """Return a properly formatting dataframe
+
+        Parameters
+        ----------
+        path : str
+            The URL path to query
+        resp : List[Dict]
+            The response from the API
+        guess_pivot : bool, default = True
+            If the query is a timeseries query, break the query into chunk day intervals
+
+        Returns
+        -------
+        pd.DataFrame : The formatted dataframe
+        """
         df = pd.DataFrame(resp)
         resp_type = self._paths[path]["responses"]["200"]["content"][
             "application/json"
@@ -172,6 +180,7 @@ class IsoStream:
         return df
 
     def _is_time_query(self, kwargs: dict) -> bool:
+        """Return whether the query is a time series query"""
         return "start" in kwargs and "end" in kwargs
 
     def _api_get(
@@ -194,6 +203,10 @@ class IsoStream:
             If returning a DataFrame, pivot the resulting dataframe
         **kwargs : Any
             The parameters for the method call
+
+        Returns
+        -------
+        Union[pd.DataFrame, List[Dict]] : The result of the API call
         """
         params = {}
         m = self._path_to_name(path)
@@ -214,11 +227,6 @@ class IsoStream:
                 else:
                     p = parse(p).strftime(self._format)
             params[name] = p
-        # if "timezone" in kwargs:
-        #     params["timezone"] = kwargs.pop("timezone")
-        # if kwargs:
-        #     invalid = ",".join(list(kwargs.keys()))
-        #     raise TypeError(f"{m}() got an unexpected keyword argument: '{invalid}'")
 
         if self._is_time_query(params):
             resp = []
@@ -238,7 +246,17 @@ class IsoStream:
         return resp
 
     def api_methods(self, filter: str = None) -> None:
-        """ "Print all available API Methods. Optionally filter methods on keyword"""
+        """Print all available API Methods. Optionally filter methods on keyword
+
+        Parameters
+        ----------
+        filter : str, default = None
+            The keyword to filter methods on
+
+        Returns
+        -------
+        None
+        """
         for path in self._api_spec["paths"]:
             if filter and filter not in path:
                 continue
