@@ -1,5 +1,5 @@
 # isostream
-ISOStream API
+IsoStream Python Client
 
 A simple wrapper around the ISOStream API that produces JSON or well formated pandas DataFrames from query results.
 The the API client, methods, inputs and responses and all dynamically created from the OpenAPI specification of the IsoStream REST API.
