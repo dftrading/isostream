@@ -9,7 +9,7 @@ README = (HERE / "README.md").read_text()
 setup(
     name="isostream",
     packages=["isostream"],
-    version="1.0.1",
+    version="1.0.2",
     description="Python Client for the IsoStream API",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -19,7 +19,6 @@ setup(
     author_email="info@isostream.io",
     install_requires=[
         "pandas",
-        "dateutil",
         "requests",
     ],
 )
