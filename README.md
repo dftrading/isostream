@@ -20,7 +20,7 @@ All of the REST API endpoints available on client as methods.
 ```
 from isostream import IsoStream
 
-client = IsoStream("<your_api_key_>")
+client = IsoStream("<your_api_key>")
 
 df = client.dalmp_node(node="WESTERN HUB", start="2021-01-01", end="2021-02-01", iso="PJM")
 ```
