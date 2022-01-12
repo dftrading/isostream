@@ -1,14 +1,22 @@
-from distutils.core import setup
+import pathlib
+
+from setuptools import setup
+
+HERE = pathlib.Path(__file__).parent
+
+README = (HERE / "README.md").read_text()
 
 setup(
     name="isostream",
     packages=["isostream"],
     version="1.0.1",
-    description="Python Client for the ISOStream API",
-    author="ISOStream",
+    description="Python Client for the IsoStream API",
+    long_description=README,
+    long_description_content_type="text/markdown",
+    url="https://github.com/dftrading/isostream",
+    author="IsoStream",
+    license="MIT",
     author_email="info@isostream.io",
-    url="isostream.io",
-    python_requires=">=3.6",
     install_requires=[
         "pandas",
         "dateutil",
