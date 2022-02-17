@@ -114,7 +114,7 @@ class IsoStream:
                 )
             except Exception:
                 msg = resp.text
-            raise ApiException(f"Error in API Call: {msg}")
+            raise ApiException(f"Error in API Call to {path}{params} - {msg}")
         return resp.json()
 
     def _path_to_name(self, path: str) -> str:
